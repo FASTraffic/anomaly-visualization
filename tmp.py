@@ -29,7 +29,7 @@ initial_selected_vsl_source = 'aidss'
 initial_selected_anomalies_source = 'GCN'
 vsl_source_options = {'aidss': 'AI-DSS evaluations', 'swcs': 'SmartwayCS default'}
 anomalies_source_options = {'GCN': 'Graph Convolutional Network', 'GAT': 'Spatiotemporal Graph Attention Network', 
-                          'RSTAE': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'All models'}
+                          'RSTAE': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'Ensemble'}
 def vsl_source_status_display(vsl_source_description):
     return [html.Span(vsl_source_description)]
 def anomalies_source_status_display(anomalies_source_description):
@@ -139,7 +139,7 @@ layout = html.Div([
             html.Div(id=vsl_source_status_id,
                      children=vsl_source_status_display(vsl_source_options[initial_selected_vsl_source])),
             dcc.Dropdown(id=anomalies_source_select_id, placeholder="Select anomaly detection model",
-                         value=initial_selected_anomales_source,
+                         value=initial_selected_anomalies_source,
                          options=[{'label': v, 'value': k} for k, v in anomalies_source_options.items()]),
             html.Div(id=anomalies_source_status_id,
                      children=anomalies_source_status_display(anomalies_source_options[initial_selected_anomalies_source]))
@@ -390,11 +390,11 @@ def generate_figure(rds_cache_to_plot, vsl_cache_to_plot, dt_low_bound, dt_high_
            State(east_vsl_store_id, 'data'), State(west_vsl_store_id, 'data'),
            State(anomalies_store_id, 'data')],         # Added
           prevent_initial_call=False)
-def update_graph_live(interval_number, click_number, database_display_value, lookback_display_value, vsl_display_value,
+def update_graph_live(interval_number, click_number, database_display_value, lookback_display_value, vsl_display_value, anomalies_display_value,
                       current_database, current_lookback, current_update_interval_seconds,
-                      last_data_refresh, current_vsl_source,
+                      last_data_refresh, current_vsl_source, current_anomalies_source,
                       existing_east_data_cache_dict, existing_west_data_cache_dict,
-                      existing_east_vsl_cache_dict, existing_west_vsl_cache_dcit):
+                      existing_east_vsl_cache_dict, existing_west_vsl_cache_dcit, anomalies_cache_dict):
     """
     Callback function for graph updating. Fires on interval timer, manual refresh button, change in database selection,
         or change in lookback period selection.
