@@ -164,8 +164,8 @@ layout = html.Div([
     html.Br(),
     html.Div([
         html.Div(id=metrics_text_div_id),
-        html.H3(children='Eastbound direction', style={'textAlign': 'center'}),
-        dcc.Graph(id=east_speed_ts_id),
+        # html.H3(children='Eastbound direction', style={'textAlign': 'center'}),
+        # dcc.Graph(id=east_speed_ts_id),
         html.H3(children='Westbound direction', style={'textAlign': 'center'}),
         dcc.Graph(id=west_speed_ts_id),
     ]),
