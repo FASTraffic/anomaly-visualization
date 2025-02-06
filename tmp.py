@@ -30,6 +30,7 @@ initial_selected_anomalies_source = 'GCN'
 vsl_source_options = {'aidss': 'AI-DSS evaluations', 'swcs': 'SmartwayCS default'}
 anomalies_source_options = {'GCN': 'Graph Convolutional Network', 'GAT': 'Spatiotemporal Graph Attention Network', 
                           'RSTAE': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'Ensemble'}
+initial_delta_threshold = 0.0
 def vsl_source_status_display(vsl_source_description):
     return [html.Span(vsl_source_description)]
 def anomalies_source_status_display(anomalies_source_description):
@@ -73,6 +74,9 @@ anomalies_source_status_id = site_path_stub + '-anomalies-source-status'
 anomalies_store_id = site_path_stub + '-anomalies-store'
 settings_vsl_source_store_id = site_path_stub + '-setting-vsl-select-store'
 settings_anomalies_source_store_id = site_path_stub + '-setting-anomalies-select-store'
+threshold_slider_id = site_path_stub + '-threshold-slider'
+threshold_status_id = site_path_stub + '-threshold-status'
+settings_threshold_store_id = site_path_stub + 'setting-threshold-store'
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
@@ -104,6 +108,10 @@ lookback_marks = {i: '{}hr'.format(i) for i in range(2, 24, step_lookback)}
 lookback_marks.update({i: '{}hr'.format(i) for i in range(24, max_lookback+1, step_lookback*2)})
 assert initial_lookback_hours < max_lookback and initial_lookback_hours % step_lookback == 0, \
     "Invalid default lookback interval based on maximum and step value."
+min_threshold = -0.5
+max_threshold = 0.5
+step_threshold = 0.05
+threshold_marks = np.arange(min_threshold, max_threshold+step_threshold, step_threshold)
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
@@ -159,13 +167,19 @@ layout = html.Div([
                        value=initial_lookback_hours, updatemode='drag'),
             html.Div(id=lookback_status_id, children=lookback_display(initial_lookback_hours))
         ]),
+        dbc.Col([
+            html.H4("Delta threshold (MSE)"),
+            dcc.Slider(min_threshold, max_threshold, step_threshold, id=threshold_slider_id, marks=threshold_marks,
+                       value=initial_delta_threshold, updatemode='drag'),
+            html.Div(id=threshold_status_id, children=threshold_display(initial_delta_threshold)) #TODO: what is this children function doing?
+        ]),
     ]),
     # Current run text display and main plot
     html.Br(),
     html.Div([
         html.Div(id=metrics_text_div_id),
-        # html.H3(children='Eastbound direction', style={'textAlign': 'center'}),
-        # dcc.Graph(id=east_speed_ts_id),
+        html.H3(children='Eastbound direction', style={'textAlign': 'center'}),
+        dcc.Graph(id=east_speed_ts_id),
         html.H3(children='Westbound direction', style={'textAlign': 'center'}),
         dcc.Graph(id=west_speed_ts_id),
     ]),
@@ -264,6 +278,9 @@ def update_anomalies_source_selected(value, current_setting):
     print("DEBUG: New anomalies source selected is {}.".format(value))
     # Return a display of the name/description of the database.
     return anomalies_source_status_display(anomalies_source_options[value]), value
+
+def threshold_display(tmp):
+    pass
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
