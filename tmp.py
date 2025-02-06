@@ -459,9 +459,9 @@ def update_graph_live(interval_number, click_number, database_display_value, loo
 
     # TODO: update this call to generate_figure() if you need additional/different arguments
     east_new_figure = generate_figure(rds_cache_to_plot=east_new_data_cache, vsl_cache_to_plot=east_new_vsl_cache,
-                                      dt_low_bound=new_lookback_dt, dt_high_bound=now_dt)
+                                      dt_low_bound=new_lookback_dt, dt_high_bound=now_dt, anomalies_cache_to_plot=None)
     west_new_figure = generate_figure(rds_cache_to_plot=west_new_data_cache, vsl_cache_to_plot=west_new_vsl_cache,
-                                      dt_low_bound=new_lookback_dt, dt_high_bound=now_dt)
+                                      dt_low_bound=new_lookback_dt, dt_high_bound=now_dt, anomalies_cache_to_plot=None)
 
     new_last_refresh = dt_to_str(now_dt)
     return east_new_figure, dash.no_update, \
