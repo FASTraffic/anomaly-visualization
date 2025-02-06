@@ -2,6 +2,7 @@ import time
 
 import dash
 import pandas as pd
+import numpy as np
 from dash import dcc, html, callback, ctx
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -14,6 +15,8 @@ from global_config import *
 from queries import links_with_filter, vsl_speeds
 
 
+def threshold_display(threshold):
+    return [html.Span(f'Delta Threshold: {threshold}')]
 # ------------------------------------------------------------------
 #                Plot configuration values
 # ------------------------------------------------------------------
@@ -111,7 +114,7 @@ assert initial_lookback_hours < max_lookback and initial_lookback_hours % step_l
 min_threshold = -0.5
 max_threshold = 0.5
 step_threshold = 0.05
-threshold_marks = np.arange(min_threshold, max_threshold+step_threshold, step_threshold)
+threshold_marks = {i: str(x) for i, x in enumerate(np.arange(min_threshold, max_threshold+step_threshold, step_threshold))}
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
@@ -279,8 +282,6 @@ def update_anomalies_source_selected(value, current_setting):
     # Return a display of the name/description of the database.
     return anomalies_source_status_display(anomalies_source_options[value]), value
 
-def threshold_display(tmp):
-    pass
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
