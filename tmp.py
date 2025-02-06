@@ -26,9 +26,9 @@ title = "VSL status versus RDS data"
 subtitle = """
 This dashboard compares RDS reported speed versus VSL evaluation, with synchronized axes."""
 initial_selected_vsl_source = 'aidss'
-initial_selected_anomaly_source = 'GCN'
+initial_selected_anomalies_source = 'GCN'
 vsl_source_options = {'aidss': 'AI-DSS evaluations', 'swcs': 'SmartwayCS default'}
-anomaly_source_options = {'GCN': 'Graph Convolutional Network', 'GAT': 'Spatiotemporal Graph Attention Network', 
+anomalies_source_options = {'GCN': 'Graph Convolutional Network', 'GAT': 'Spatiotemporal Graph Attention Network', 
                           'RSTAE': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'All models'}
 def vsl_source_status_display(vsl_source_description):
     return [html.Span(vsl_source_description)]
@@ -139,10 +139,10 @@ layout = html.Div([
             html.Div(id=vsl_source_status_id,
                      children=vsl_source_status_display(vsl_source_options[initial_selected_vsl_source])),
             dcc.Dropdown(id=anomalies_source_select_id, placeholder="Select anomaly detection model",
-                         value=initial_selected_anomaly_source,
-                         options=[{'label': v, 'value': k} for k, v in anomaly_source_options.items()]),
-            html.Div(id=anomaly_source_status_id,
-                     children=anomaly_source_status_display(anomaly_source_options[initial_selected_anomaly_source]))
+                         value=initial_selected_anomales_source,
+                         options=[{'label': v, 'value': k} for k, v in anomalies_source_options.items()]),
+            html.Div(id=anomalies_source_status_id,
+                     children=anomalies_source_status_display(anomalies_source_options[initial_selected_anomalies_source]))
         ])
     ]),
     # Refresh interval slider and display, next to lookback period slider and display
@@ -185,7 +185,7 @@ layout = html.Div([
     dcc.Store(id=settings_interval_store_id, storage_type='memory', data=initial_update_seconds),
     dcc.Store(id=settings_lookback_store_id, storage_type='memory', data=initial_lookback_hours),
     dcc.Store(id=settings_vsl_source_store_id, storage_type='memory', data=initial_selected_vsl_source),
-    dcc.Store(id=settings_anomalies_source_store_id, storage_type='memory', data=initial_selected_anomaly_source),
+    dcc.Store(id=settings_anomalies_source_store_id, storage_type='memory', data=initial_selected_anomalies_source),
 ])
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
