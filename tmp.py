@@ -316,12 +316,8 @@ def database_query_vsl(start_datetime_exclusive, end_datetime_inclusive, databas
                       dataframe_or_lists='dataframe', include_vsl_id=False)
 
 #TODO: this does not do the anomaly calculation, so anomaly source shouldn't be selected?
-def database_query_anomalies(start_datetime_exclusive, end_datetime_inclusive, database_name, vsl_source): 
-    return vsl_speeds(start_datetime_exclusive=start_datetime_exclusive,
-                      end_datetime_inclusive=end_datetime_inclusive,
-                      database_name=database_name,
-                      vsl_source=vsl_source,
-                      dataframe_or_lists='dataframe', include_vsl_id=False)
+def database_query_anomalies(start_datetime_exclusive, end_datetime_inclusive, database_name): 
+    return None
 
 
 # !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !
@@ -467,6 +463,6 @@ def update_graph_live(interval_number, click_number, database_display_value, loo
     return east_new_figure, dash.no_update, \
         west_new_figure, dash.no_update, \
         dash.no_update, dash.no_update, \
-        new_last_refresh
+        dash.no_update, new_last_refresh
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
