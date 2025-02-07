@@ -6,6 +6,7 @@ import numpy as np
 from dash import dcc, html, callback, ctx
 import plotly.express as px
 from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 
@@ -19,6 +20,13 @@ from queries import links_with_filter, vsl_speeds
 
 def threshold_display(threshold):
     return [html.Span(f'Delta Threshold: {threshold}')]
+
+#TODO: trigger this properly
+def anomaly_status(status):
+    print('Calling')
+    if status is None: 
+        return 
+    return [html.Span(f'Latest anomaly at milemarker {status['milemarker']}, lane {status['lane']}. {status['total_anomalies']} total anomalies detected in the chosen lookback period.')]
 # ------------------------------------------------------------------
 #                Plot configuration values
 # ------------------------------------------------------------------
@@ -30,10 +38,12 @@ initial_selected_database = 'aidss-prod'         # Must be in Postgres instance
 title = "Anomaly Detection Dashboard"
 subtitle = """
 Displaying live graph neural network anomaly detection predictions on RDS data."""
-initial_selected_anomalies_source = 'GCN'
+initial_selected_anomalies_source = 'gcn'
 vsl_source_options = {'aidss': 'AI-DSS evaluations', 'swcs': 'SmartwayCS default'}
-anomalies_source_options = {'GCN': 'Graph Convolutional Network', 'GAT': 'Spatiotemporal Graph Attention Network', 
-                          'RSTAE': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'Ensemble'}
+anomalies_source_options = {'gcn': 'Graph Convolutional Network', 'gat': 'Spatiotemporal Graph Attention Network', 
+                          'rgcn': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'Ensemble'}
+inv_anomalies_source_options = {'Graph Convolutional Network': 'gcn', 'Spatiotemporal Graph Attention Network': 'gat', 
+                          'Relational Spatiotemporal Autoencoder': 'rgcn', 'Ensemble': 'Ensemble'}
 initial_delta_threshold = 0.0
 def anomalies_source_status_display(anomalies_source_description):
     return [html.Span(html.Strong('Current model:'))]
@@ -70,6 +80,8 @@ settings_anomalies_source_store_id = site_path_stub + '-setting-anomalies-select
 threshold_slider_id = site_path_stub + '-threshold-slider'
 threshold_status_id = site_path_stub + '-threshold-status'
 settings_threshold_store_id = site_path_stub + '-setting-threshold-store'
+anomaly_status_id = site_path_stub + '-anomaly-status'
+settings_anomaly_status_id = site_path_stub + '-setting-anomaly-status'
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
@@ -101,12 +113,12 @@ lookback_marks = {i: '{}hr'.format(i) for i in range(2, 24, step_lookback)}
 lookback_marks.update({i: '{}hr'.format(i) for i in range(24, max_lookback+1, step_lookback*2)})
 assert initial_lookback_hours < max_lookback and initial_lookback_hours % step_lookback == 0, \
     "Invalid default lookback interval based on maximum and step value."
-min_threshold = -0.5
-max_threshold = 0.5
-step_threshold = 0.05
-threshold_range = np.arange(min_threshold, max_threshold+step_threshold, step_threshold).round(2)
+min_threshold = -0.3
+max_threshold = 0.3
+step_threshold = 0.025
+threshold_range = np.arange(min_threshold, max_threshold+step_threshold, step_threshold).round(3)
 threshold_range = threshold_range[threshold_range != -0.0]
-threshold_marks = {float(x): str(float(x)) if x in [-0.5, 0.5] else '' for x in threshold_range}
+threshold_marks = {float(x): str(float(x)) if x in [-0.3, -0.25, -0.2, -0.15, -0.1, -0.05, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3] else '' for x in threshold_range}
 threshold_marks[0] = '0'
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
@@ -149,11 +161,14 @@ layout = html.Div([
                        value=initial_lookback_hours, updatemode='drag'),
             html.Div(id=lookback_status_id, children=lookback_display(initial_lookback_hours))
         ]),
+    ]),
+    dbc.Row([
         dbc.Col([
             html.H4("Delta threshold (MSE)"),
             dcc.Slider(min_threshold, max_threshold, step_threshold, id=threshold_slider_id, marks=threshold_marks,
                        value=initial_delta_threshold, updatemode='drag'),
-            html.Div(id=threshold_status_id, children=threshold_display(initial_delta_threshold))
+            html.Div(id=threshold_status_id, children=threshold_display(initial_delta_threshold)),
+            html.Div(id=anomaly_status_id, children=anomaly_status(None))
         ]),
     ]),
     # Current run text display and main plot
@@ -304,7 +319,7 @@ def get_anomaly_data(lookback_hours:int):
     dict_anomaly = make_database_query(database_to_connect='aidss-prod',
                                      query_text=query_formatted,
                                      query_inputs=query_input_dict,
-                                     dataframe_or_lists='list',
+                                     dataframe_or_lists='df',
                                      dataframe_column_names=query_columns, 
                                      config_override=config_override)
     return dict_anomaly
@@ -315,7 +330,22 @@ def get_anomaly_data(lookback_hours:int):
 # >>> Note: if you change the function call signature, change it in the update_graph_live() function below
 # !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !
 
-def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomalies_cache_to_plot):
+def determine_anomalies(lane_data, model, delta_threshold):
+    if model == 'Ensemble':
+        lane_data.loc[:, 'anomaly1'] = lane_data['reconstruction_error_gcn'] > (lane_data['threshold_gcn'] + delta_threshold)
+        lane_data.loc[:, 'anomaly2'] = lane_data['reconstruction_error_gat'] > (lane_data['threshold_gat'] + delta_threshold)
+        lane_data.loc[:, 'anomaly3'] = lane_data['reconstruction_error_rgcn'] > (lane_data['threshold_rgcn'] + delta_threshold)
+        lane_data.loc[:, 'anomaly'] = lane_data['anomaly1'] & lane_data['anomaly2'] & lane_data['anomaly3']
+    else:
+        lane_data.loc[:, 'anomaly'] = lane_data[f'reconstruction_error_{model}'] > (lane_data[f'threshold_{model}'] + delta_threshold)
+
+
+    lane_data['anomaly'] = lane_data['anomaly'].astype(int)
+    print("ANOMALIES:", np.sum(lane_data['anomaly']))
+    return lane_data[lane_data['anomaly']==1]
+
+
+def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomaly_data, delta_threshold, model):
     """
     Function to generate plot from data cache (and any secondary inputs).
     :param data_cache_to_plot: current data cache (likely as dataframe)
@@ -324,19 +354,41 @@ def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomalies_ca
     :return: Plotly figure
     """
     if rds_cache_to_plot is None:
-        return make_subplots(rows=2, cols=1)
+        return make_subplots(rows=1, cols=1) 
 
     rds_plot_df = rds_cache_to_plot.groupby('milemarker')[['speed', 'link_update_time']].resample(
         '30s', on='link_update_time').mean()
     rds_plot_df = pd.pivot_table(rds_plot_df, values='speed', index=['link_update_time'], columns=['milemarker'])
 
+    lane1_data = anomaly_data[anomaly_data['lane_id']==1]
+    anomaly_points = determine_anomalies(lane1_data, model, delta_threshold)
+
     # convert to central time
     rds_plot_df.index = rds_plot_df.index.tz_convert(local_tz_name)
+    anomaly_points.set_index('rds_update_time', inplace=True)
+    anomaly_points.index = anomaly_points.index.tz_convert(local_tz_name)
 
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, shared_yaxes=True, y_title='Nashville   ---   Murfreesboro')
+    status = {
+        'milemarker': anomaly_points.iloc[-1]['milemarker'],
+        'lane': anomaly_points.iloc[-1]['lane_id'],
+        'total_anomalies': np.sum(anomaly_points['anomaly']),
+    }
+    anomaly_status(status)
+
+    fig = make_subplots(rows=1, cols=1, shared_xaxes=True, shared_yaxes=True, y_title='Nashville   ---   Murfreesboro')
     fig.update_layout(height=800, width=1200)
+    fig.add_trace(
+        go.Scatter(
+            x=anomaly_points.index,  # Use the timestamp column
+            y=anomaly_points['milemarker'],  # Use milemarker as y-axis
+            mode='markers',
+            marker=dict(color='purple', size=5, symbol='x'),
+            name="Detected Anomalies"
+        ),
+        row=1, col=1
+    )
     fig.add_trace(trace=px.imshow(rds_plot_df.T, origin='lower', zmin=0, zmax=85,
-                                  labels=dict(x="Time", y="Mile marker", color='speed')).data[0], #TODO: add anomalies detected to this
+                                  labels=dict(x="Time", y="Mile marker", color='speed')).data[0],
                   row=1, col=1)
     fig.update_traces(xaxis='x2')
     fig.update_layout(xaxis_nticks=36, xaxis_range=[dt_low_bound, dt_high_bound])
@@ -346,27 +398,17 @@ def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomalies_ca
 
     return fig
 
-
-# ------------------------------------------------------------------
-#               Callback function for plot update
-# ------------------------------------------------------------------
-# TODO: should only need to change callback inputs/outputs or definition for query and plot functions (see TODOs below)
-# ------------------------------------------------------------------
-# TODO: if anomaly source or threshold has changed but data has not, just recalculate which ones are anomalies
-@callback([Output(west_speed_ts_id, 'figure'), Output(west_data_store_id, 'data'),
-           Output(anomalies_store_id, 'data'), Output(last_refresh_store_id, 'data')],
+# Callback function for data update (triggers the plot update)
+@callback([Output(west_data_store_id, 'data'), Output(anomalies_store_id, 'data'), Output(last_refresh_store_id, 'data')],
           [Input(interval_id, 'n_intervals'), Input(refresh_button_id, 'n_clicks'),
-            Input(lookback_status_id, 'children'),
-           Input(anomalies_source_status_id, 'children'), Input(threshold_status_id, 'children'),
-             State(settings_lookback_store_id, 'data'),
+           Input(lookback_status_id, 'children'), State(settings_lookback_store_id, 'data'),
            State(settings_interval_store_id, 'data'), State(last_refresh_store_id, 'data'), 
-           State(settings_anomalies_source_store_id, 'data'), State(settings_threshold_store_id, 'data'),
            State(west_data_store_id, 'data'), State(anomalies_store_id, 'data')],         # Added
           prevent_initial_call=False)
-def update_graph_live(interval_number, click_number, lookback_display_value, anomalies_display_value, threshold_display_value,
+def update_data(interval_number, click_number, lookback_display_value,
                       current_lookback, current_update_interval_seconds,
-                      last_data_refresh, current_anomalies_source, current_threshold,
-                      existing_west_data_cache_dict, anomalies_cache_dict):
+                      last_data_refresh, existing_west_data_cache_dict, 
+                      anomalies_cache_dict):
     """
     Callback function for graph updating. Fires on interval timer, manual refresh button, change in database selection,
         or change in lookback period selection.
@@ -421,14 +463,37 @@ def update_graph_live(interval_number, click_number, lookback_display_value, ano
         return no_plot_update()
     
     anomaly_data = get_anomaly_data(current_lookback)
-    print(anomaly_data)
-    print(f"DEBUG: {site_path_stub} plot query took {time.time() - query_start_time} seconds to run.")
-
-    # TODO: update this call to generate_figure() if you need additional/different arguments
-    west_new_figure = generate_figure(rds_cache_to_plot=west_new_data_cache, dt_low_bound=new_lookback_dt, 
-                                      dt_high_bound=now_dt, anomalies_cache_to_plot=None)
+    # anomaly_data = get_anomaly_data(1)
+    print(f"DEBUG: {site_path_stub} query took {time.time() - query_start_time} seconds to run.")
 
     new_last_refresh = dt_to_str(now_dt)
-    return west_new_figure, dash.no_update, dash.no_update, new_last_refresh
+
+    west_rds_cache = dataframe_to_page_storage(west_new_data_cache)
+    anomaly_cache = dataframe_to_page_storage(anomaly_data)
+
+    return west_rds_cache, anomaly_cache, new_last_refresh
+
+
+# Callback function for plot update
+# Updates the graph without necessarily querying more data
+# Useful when moving the threshold or selecting a new model
+@callback([Output(west_speed_ts_id, 'figure')], 
+          [Input(interval_id, 'n_intervals'), Input(refresh_button_id, 'n_clicks'),
+           Input(anomalies_source_status_id, 'children'), Input(threshold_status_id, 'children'), 
+           Input(west_data_store_id, 'data'), Input(anomalies_store_id, 'data'),
+           State(settings_lookback_store_id, 'data'), State(settings_anomalies_source_store_id, 'data'), State(settings_threshold_store_id, 'data')])
+def update_graph_live(interval_number, click_number, anomalies_display, threshold_display,
+                      west_data, anomaly_data, lookback, anomalies_display_value, threshold_display_value):
+    print(f"DEBUG: {site_path_stub} function update_graph_live called by {ctx.triggered_id} component.")
+
+    west_data = load_dataframe_from_page_storage(west_data, 'link_update_time')
+    anomaly_data = load_dataframe_from_page_storage(anomaly_data, 'rds_update_time')
+
+    now_dt = now_tz()
+    west_new_figure = generate_figure(rds_cache_to_plot=west_data, dt_low_bound=lookback, 
+                                      dt_high_bound=now_dt, anomaly_data=anomaly_data,
+                                      delta_threshold=threshold_display_value, model=anomalies_display_value)
+
+    return (west_new_figure,)
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
