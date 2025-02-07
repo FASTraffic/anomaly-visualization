@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
+import ast
 
 from utility import *
 from global_config import *
@@ -290,7 +291,7 @@ def update_system_run_metadata(interval_number, click_number, last_data_refresh)
 def database_query_rds(road_direction, start_datetime_exclusive, end_datetime_inclusive, database_name):
     # Get the RDS filter for the gantry range from the global config
     mm_low, mm_high, link_low, link_high = rds_filter_parameters['gantries']
-    return links_with_filter(road_direction=road_direction, rds_measures='speed',
+    return get_rds_data(road_direction=road_direction, rds_measures='speed',
                              start_datetime_exclusive=start_datetime_exclusive,
                              end_datetime_inclusive=end_datetime_inclusive, database_name=database_name,
                              rds_filter_mm_low=mm_low, rds_filter_mm_high=mm_high,
@@ -323,6 +324,103 @@ def get_anomaly_data(lookback_hours:int):
                                      dataframe_column_names=query_columns, 
                                      config_override=config_override)
     return dict_anomaly
+
+def get_rds_data(road_direction, rds_measures, start_datetime_exclusive, end_datetime_inclusive, database_name,
+                      rds_filter_mm_low, rds_filter_mm_high, rds_filter_link_id_min=None, rds_filter_link_id_max=None):
+    """
+    Query a range of time-space data for a specific direction and measure (speed/vol/occ).
+    :param road_direction: 'E' or 'W'
+    :param rds_measures: single string or list of strings; 'speed', 'volume', or 'occupancy' (links column name) #add smooth_speed
+    :param start_datetime_exclusive: timezone-aware datetime for non-inclusive lower bound of RDS data timestamp
+    :param end_datetime_inclusive: timezone-aware datetime for inclusive upper bound of RDS data timestamp
+    :param database_name: currently selected database to connect to
+    :param rds_filter_mm_low: required minimum milemarker filter for RDS links
+    :param rds_filter_mm_high: required maximum milemarker filter for RDS links
+    :param rds_filter_link_id_min: (optional) link ID lower bound, to filter older links or auxiliary links
+    :param rds_filter_link_id_max: (optional) link ID upper bound, to filter older links or auxiliary links
+    :return: dataframe containing new records to be added to the data cache
+    """
+    direction_translate = {'E': 'Eastbound', 'W': 'Westbound'}
+    if road_direction not in ('E', 'W'):
+        raise ValueError("Invalid road direction given. Specify 'E' or 'W'.")
+    if isinstance(rds_measures, (list, tuple)):
+        rds_measures_list = rds_measures
+    elif isinstance(rds_measures, str):
+        rds_measures_list = [rds_measures]
+    else:
+        raise ValueError("Invalid data type for input `rds_measures`.")
+    if len(set(rds_measures_list).difference({'speed', 'volume', 'occupancy', 'smooth_speed'})) > 0:
+        raise ValueError("Invalid RDS measure given. Specify 'speed', 'volume', 'occupancy', or 'smooth_speed'.")
+    # String formatting can be used ot insert the column names because they're plain text.
+    # Non-string values should not be inserted this way, since psycopg2 includes more logic for that in query execution.
+    query_columns = ['link_update_time', 'milemarker', 'lane_dict_text'] + rds_measures_list
+    link_id_filter_low = (f"AND link_id >= {rds_filter_link_id_min}" if rds_filter_link_id_min is not None else "")
+    link_id_filter_high = (f"AND link_id <= {rds_filter_link_id_max}" if rds_filter_link_id_max is not None else "")
+    query_formatted = """
+    SELECT {}
+    FROM raw_messages.raw_links 
+    WHERE link_update_time <= %(dt_high)s AND link_update_time > %(dt_low)s
+        AND direction = %(direction)s AND milemarker >= %(mm_low)s AND milemarker <= %(mm_high)s
+        {} {}
+    ORDER BY link_update_time ASC;""".format(', '.join(query_columns), link_id_filter_low, link_id_filter_high)
+    query_input_dict = {'dt_high': end_datetime_inclusive, 'dt_low': start_datetime_exclusive,
+                        'direction': direction_translate[road_direction], 'mm_low': rds_filter_mm_low,
+                        'mm_high': rds_filter_mm_high}
+
+    return make_database_query(database_to_connect=database_name, query_text=query_formatted,
+                               query_inputs=query_input_dict, dataframe_or_lists='dataframe',
+                               dataframe_column_names=query_columns)
+
+# def extract_lane_data(data):
+#     result = []
+
+#     for i, row in data.iterrows():
+#         lane_data = [None, None, None, None]
+#         curr_row = ast.literal_eval(row)
+#         for key in curr_row.keys():
+#             lane_info = row[key]
+
+#             lane = int(lane_info[0][-1])
+
+#             if lane >= 1 and lane <= 4:
+#                 lane_data[lane-1] = lane_info[1]
+
+#             data.append(lane_data)
+
+#     result = np.array(result)
+#     new_df = data.copy()
+
+#     new_df['lane1_speed'] = result[:,0]
+#     new_df['lane2_speed'] = result[:,1]
+#     new_df['lane3_speed'] = result[:,2]
+#     new_df['lane4_speed'] = result[:,3]
+    
+#     return new_df
+
+def extract_lane_data(data):
+    def process_row(row):
+        lane_data = [None] * 4  # Always ensure exactly 4 elements
+        curr_row = ast.literal_eval(row)  # Convert string representation to dictionary
+
+        for lane_info in curr_row.values():
+            lane = int(lane_info[0][-1])  # Extract lane number
+            if len(lane_info) > 1:
+                if 1 <= lane <= 4:
+                    lane_data[lane - 1] = lane_info[1]  # Store speed data
+
+        return lane_data  # Always returns a list of length 4
+
+    # Apply function to the 'lane_dict_text' column
+    lane_speeds = data['lane_dict_text'].apply(process_row)
+
+    # Convert to DataFrame directly (no need for np.vstack)
+    lane_speeds_df = pd.DataFrame(lane_speeds.tolist(), columns=['lane1_speed', 'lane2_speed', 'lane3_speed', 'lane4_speed'])
+
+    # Merge results with the original DataFrame
+    new_df = data.copy()
+    new_df = pd.concat([new_df, lane_speeds_df], axis=1)
+
+    return new_df
 
 
 # !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !
@@ -376,7 +474,8 @@ def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomaly_data
     anomaly_status(status)
 
     fig = make_subplots(rows=1, cols=1, shared_xaxes=True, shared_yaxes=True, y_title='Nashville   ---   Murfreesboro')
-    fig.update_layout(height=800, width=1200)
+    # fig.update_layout(height=800, width=1200)
+    fig.update_layout(height=800, autosize=True)
     fig.add_trace(
         go.Scatter(
             x=anomaly_points.index,  # Use the timestamp column
@@ -456,14 +555,15 @@ def update_data(interval_number, click_number, lookback_display_value,
     # TODO: update this call to database_query() if you need additional arguments
     west_new_data_cache = database_query_rds(start_datetime_exclusive=new_lookback_dt, end_datetime_inclusive=now_dt,
                                             database_name=initial_selected_database, road_direction='W')
+    # print(extract_lane_data(west_new_data_cache).columns)
     # Concatenate the new and existing dataframes
     # >>> Note: all dataframes should be time sorted in descending order if you want to maintain order
 
     if west_new_data_cache is None:
         return no_plot_update()
     
-    anomaly_data = get_anomaly_data(current_lookback)
-    # anomaly_data = get_anomaly_data(1)
+    # anomaly_data = get_anomaly_data(current_lookback)
+    anomaly_data = get_anomaly_data(1)
     print(f"DEBUG: {site_path_stub} query took {time.time() - query_start_time} seconds to run.")
 
     new_last_refresh = dt_to_str(now_dt)
