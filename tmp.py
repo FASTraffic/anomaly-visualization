@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 import ast
+from zoneinfo import ZoneInfo
 
 from utility import *
 from global_config import *
@@ -353,7 +354,8 @@ def get_anomaly_data(lookback_hours:int):
 # >>> Note: if you change the function call signature, change it in the update_graph_live() function below
 # !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !
 
-def determine_anomalies(lane_data, model, delta_threshold):
+def determine_anomalies(data, model, delta_threshold):
+    lane_data = data.copy()
     if model == 'Ensemble':
         lane_data.loc[:, 'anomaly1'] = lane_data['reconstruction_error_gcn'] > (lane_data['threshold_gcn'] + delta_threshold)
         lane_data.loc[:, 'anomaly2'] = lane_data['reconstruction_error_gat'] > (lane_data['threshold_gat'] + delta_threshold)
@@ -479,6 +481,9 @@ def update_data(interval_number, click_number, lookback_display_value,
     # time lower bound = time from the last query upper bound, i.e., last refresh timestamp
     # time upper bound = time at which this update is being made; this will be the new "last refresh timestamp"
     # TODO: update this call to database_query() if you need additional arguments
+    new_lookback_dt = new_lookback_dt.replace(tzinfo=ZoneInfo('UTC'))
+    central_tz = ZoneInfo('US/Central')
+    new_lookback_dt = new_lookback_dt.astimezone(central_tz)
     west_new_data_cache = database_query_rds(start_datetime_exclusive=new_lookback_dt, end_datetime_inclusive=now_dt,
                                             database_name=initial_selected_database, road_direction='W')
     # print(extract_lane_data(west_new_data_cache).columns)
@@ -488,8 +493,8 @@ def update_data(interval_number, click_number, lookback_display_value,
     if west_new_data_cache is None:
         return no_plot_update()
     
-    # anomaly_data = get_anomaly_data(current_lookback)
-    anomaly_data = get_anomaly_data(1)
+    anomaly_data = get_anomaly_data(current_lookback)
+    # anomaly_data = get_anomaly_data(1)
     print(f"DEBUG: {site_path_stub} query took {time.time() - query_start_time} seconds to run.")
 
     new_last_refresh = dt_to_str(now_dt)
