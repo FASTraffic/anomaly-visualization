@@ -34,13 +34,13 @@ def anomaly_status(status):
 # ------------------------------------------------------------------
 # TODO: set these values when you create a new page
 site_path = "/anomaly_rds"       # Must begin with '/'
-initial_update_seconds = 60            # Must be less than slider maximum and multiple of slider step value
+initial_update_seconds = 0            # Must be less than slider maximum and multiple of slider step value
 initial_lookback_hours = 24                     # Must be less than slider maximum and multiple of slider step value
 initial_selected_database = 'aidss-prod'         # Must be in Postgres instance
 title = "Anomaly Detection Dashboard"
 subtitle = """
 Displaying live graph neural network anomaly detection predictions on RDS data."""
-initial_selected_anomalies_source = 'gcn'
+initial_selected_anomalies_source = 'Ensemble'
 anomalies_source_options = {'gcn': 'Graph Convolutional Network', 'gat': 'Spatiotemporal Graph Attention Network', 
                           'rgcn': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'Ensemble'}
 initial_delta_threshold = 0.0
@@ -331,22 +331,12 @@ def get_anomaly_data(lookback_hours:int):
     query_columns = ['write_time', 'db_update_id', 'rds_update_time', 'milemarker', 'lane_id',
                      'direction', 'reconstruction_error_rgcn', 'reconstruction_error_gat',
                      'reconstruction_error_gcn', 'threshold_rgcn', 'threshold_gat', 'threshold_gcn']
-    
-    config_override = {
-        'DATABASE': {
-            'database_host': '10.80.3.22',
-            'database_port': 5432,
-            'database_username': 'austin',
-            'database_password': 'austin4829'
-        }
-    }
 
     dict_anomaly = make_database_query(database_to_connect='aidss-prod',
                                      query_text=query_formatted,
                                      query_inputs=query_input_dict,
                                      dataframe_or_lists='df',
-                                     dataframe_column_names=query_columns, 
-                                     config_override=config_override)
+                                     dataframe_column_names=query_columns)
     return dict_anomaly
 
 # !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !
