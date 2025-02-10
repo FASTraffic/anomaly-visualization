@@ -40,14 +40,15 @@ title = "Anomaly Detection Dashboard"
 subtitle = """
 Displaying live graph neural network anomaly detection predictions on RDS data."""
 initial_selected_anomalies_source = 'gcn'
-vsl_source_options = {'aidss': 'AI-DSS evaluations', 'swcs': 'SmartwayCS default'}
 anomalies_source_options = {'gcn': 'Graph Convolutional Network', 'gat': 'Spatiotemporal Graph Attention Network', 
                           'rgcn': 'Relational Spatiotemporal Autoencoder', 'Ensemble': 'Ensemble'}
-inv_anomalies_source_options = {'Graph Convolutional Network': 'gcn', 'Spatiotemporal Graph Attention Network': 'gat', 
-                          'Relational Spatiotemporal Autoencoder': 'rgcn', 'Ensemble': 'Ensemble'}
 initial_delta_threshold = 0.0
+initial_selected_lane = '1'
+lanes_source_options = {'1': 'Lane 1', '2': 'Lane 2', '3': 'Lane 3', '4': 'Lane 4'}
 def anomalies_source_status_display(anomalies_source_description):
     return [html.Span(html.Strong('Current model:'))]
+def lane_source_status_display(lane_source_description):
+    return [html.Span(html.Strong('Detections in:'))]
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
@@ -83,6 +84,10 @@ threshold_status_id = site_path_stub + '-threshold-status'
 settings_threshold_store_id = site_path_stub + '-setting-threshold-store'
 anomaly_status_id = site_path_stub + '-anomaly-status'
 settings_anomaly_status_id = site_path_stub + '-setting-anomaly-status'
+lane_source_select_id = site_path_stub + '-lane-select'
+lane_source_status_id = site_path_stub + '-lane-source-status'
+settings_lane_source_store_id = site_path_stub + '-setting-lane-select-store'
+
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
 
@@ -146,6 +151,11 @@ layout = html.Div([
             dcc.Dropdown(id=anomalies_source_select_id, placeholder="Select anomaly detection model",
                          value=initial_selected_anomalies_source,
                          options=[{'label': v, 'value': k} for k, v in anomalies_source_options.items()]),
+            html.Div(id=lane_source_status_id,
+                     children=lane_source_status_display(lanes_source_options[initial_selected_lane])),
+            dcc.Dropdown(id=lane_source_select_id, placeholder="Select lane number",
+                         value=initial_selected_lane,
+                         options=[{'label': v, 'value': k} for k, v in lanes_source_options.items()]),
         ])
     ]),
     # Refresh interval slider and display, next to lookback period slider and display
@@ -192,6 +202,7 @@ layout = html.Div([
     dcc.Store(id=settings_lookback_store_id, storage_type='memory', data=initial_lookback_hours),
     dcc.Store(id=settings_threshold_store_id, storage_type='memory', data=initial_delta_threshold),
     dcc.Store(id=settings_anomalies_source_store_id, storage_type='memory', data=initial_selected_anomalies_source),
+    dcc.Store(id=settings_lane_source_store_id, storage_type='memory', data=initial_selected_lane),
 ])
 # ------------------------------------------------------------------
 # ------------------------------------------------------------------
@@ -244,6 +255,18 @@ def update_anomalies_source_selected(value, current_setting):
     # Return a display of the name/description of the database.
     return anomalies_source_status_display(anomalies_source_options[value]), value
 
+@callback([Output(lane_source_status_id, 'children'), Output(settings_lane_source_store_id, 'data')],
+          [Input(lane_source_select_id, 'value'), State(settings_lane_source_store_id, 'data')])
+def update_lane_selected(value, current_setting):
+    print("DEBUG: called new anomalies source selection. Current value is {}.".format(current_setting))
+    # Attempt to suppress unnecessary callbacks that would trigger a plot update (e.g., initial page load)
+    if value == current_setting:
+        print("DEBUG: suppressed null update to anomalies source selection.")
+        return dash.no_update, dash.no_update
+    print("DEBUG: New anomalies source selected is {}.".format(value))
+    # Return a display of the name/description of the database.
+    return lane_source_status_display(lanes_source_options[value]), value
+
 @callback([Output(threshold_status_id, 'children'), Output(settings_threshold_store_id, 'data')],
           [Input(threshold_slider_id, 'value'), State(settings_threshold_store_id, 'data')])
 def update_threshold_slider(value, current_setting):
@@ -291,7 +314,7 @@ def update_system_run_metadata(interval_number, click_number, last_data_refresh)
 def database_query_rds(road_direction, start_datetime_exclusive, end_datetime_inclusive, database_name):
     # Get the RDS filter for the gantry range from the global config
     mm_low, mm_high, link_low, link_high = rds_filter_parameters['gantries']
-    return get_rds_data(road_direction=road_direction, rds_measures='speed',
+    return links_with_filter(road_direction=road_direction, rds_measures='speed',
                              start_datetime_exclusive=start_datetime_exclusive,
                              end_datetime_inclusive=end_datetime_inclusive, database_name=database_name,
                              rds_filter_mm_low=mm_low, rds_filter_mm_high=mm_high,
@@ -325,104 +348,6 @@ def get_anomaly_data(lookback_hours:int):
                                      config_override=config_override)
     return dict_anomaly
 
-def get_rds_data(road_direction, rds_measures, start_datetime_exclusive, end_datetime_inclusive, database_name,
-                      rds_filter_mm_low, rds_filter_mm_high, rds_filter_link_id_min=None, rds_filter_link_id_max=None):
-    """
-    Query a range of time-space data for a specific direction and measure (speed/vol/occ).
-    :param road_direction: 'E' or 'W'
-    :param rds_measures: single string or list of strings; 'speed', 'volume', or 'occupancy' (links column name) #add smooth_speed
-    :param start_datetime_exclusive: timezone-aware datetime for non-inclusive lower bound of RDS data timestamp
-    :param end_datetime_inclusive: timezone-aware datetime for inclusive upper bound of RDS data timestamp
-    :param database_name: currently selected database to connect to
-    :param rds_filter_mm_low: required minimum milemarker filter for RDS links
-    :param rds_filter_mm_high: required maximum milemarker filter for RDS links
-    :param rds_filter_link_id_min: (optional) link ID lower bound, to filter older links or auxiliary links
-    :param rds_filter_link_id_max: (optional) link ID upper bound, to filter older links or auxiliary links
-    :return: dataframe containing new records to be added to the data cache
-    """
-    direction_translate = {'E': 'Eastbound', 'W': 'Westbound'}
-    if road_direction not in ('E', 'W'):
-        raise ValueError("Invalid road direction given. Specify 'E' or 'W'.")
-    if isinstance(rds_measures, (list, tuple)):
-        rds_measures_list = rds_measures
-    elif isinstance(rds_measures, str):
-        rds_measures_list = [rds_measures]
-    else:
-        raise ValueError("Invalid data type for input `rds_measures`.")
-    if len(set(rds_measures_list).difference({'speed', 'volume', 'occupancy', 'smooth_speed'})) > 0:
-        raise ValueError("Invalid RDS measure given. Specify 'speed', 'volume', 'occupancy', or 'smooth_speed'.")
-    # String formatting can be used ot insert the column names because they're plain text.
-    # Non-string values should not be inserted this way, since psycopg2 includes more logic for that in query execution.
-    query_columns = ['link_update_time', 'milemarker', 'lane_dict_text'] + rds_measures_list
-    link_id_filter_low = (f"AND link_id >= {rds_filter_link_id_min}" if rds_filter_link_id_min is not None else "")
-    link_id_filter_high = (f"AND link_id <= {rds_filter_link_id_max}" if rds_filter_link_id_max is not None else "")
-    query_formatted = """
-    SELECT {}
-    FROM raw_messages.raw_links 
-    WHERE link_update_time <= %(dt_high)s AND link_update_time > %(dt_low)s
-        AND direction = %(direction)s AND milemarker >= %(mm_low)s AND milemarker <= %(mm_high)s
-        {} {}
-    ORDER BY link_update_time ASC;""".format(', '.join(query_columns), link_id_filter_low, link_id_filter_high)
-    query_input_dict = {'dt_high': end_datetime_inclusive, 'dt_low': start_datetime_exclusive,
-                        'direction': direction_translate[road_direction], 'mm_low': rds_filter_mm_low,
-                        'mm_high': rds_filter_mm_high}
-
-    return make_database_query(database_to_connect=database_name, query_text=query_formatted,
-                               query_inputs=query_input_dict, dataframe_or_lists='dataframe',
-                               dataframe_column_names=query_columns)
-
-# def extract_lane_data(data):
-#     result = []
-
-#     for i, row in data.iterrows():
-#         lane_data = [None, None, None, None]
-#         curr_row = ast.literal_eval(row)
-#         for key in curr_row.keys():
-#             lane_info = row[key]
-
-#             lane = int(lane_info[0][-1])
-
-#             if lane >= 1 and lane <= 4:
-#                 lane_data[lane-1] = lane_info[1]
-
-#             data.append(lane_data)
-
-#     result = np.array(result)
-#     new_df = data.copy()
-
-#     new_df['lane1_speed'] = result[:,0]
-#     new_df['lane2_speed'] = result[:,1]
-#     new_df['lane3_speed'] = result[:,2]
-#     new_df['lane4_speed'] = result[:,3]
-    
-#     return new_df
-
-def extract_lane_data(data):
-    def process_row(row):
-        lane_data = [None] * 4  # Always ensure exactly 4 elements
-        curr_row = ast.literal_eval(row)  # Convert string representation to dictionary
-
-        for lane_info in curr_row.values():
-            lane = int(lane_info[0][-1])  # Extract lane number
-            if len(lane_info) > 1:
-                if 1 <= lane <= 4:
-                    lane_data[lane - 1] = lane_info[1]  # Store speed data
-
-        return lane_data  # Always returns a list of length 4
-
-    # Apply function to the 'lane_dict_text' column
-    lane_speeds = data['lane_dict_text'].apply(process_row)
-
-    # Convert to DataFrame directly (no need for np.vstack)
-    lane_speeds_df = pd.DataFrame(lane_speeds.tolist(), columns=['lane1_speed', 'lane2_speed', 'lane3_speed', 'lane4_speed'])
-
-    # Merge results with the original DataFrame
-    new_df = data.copy()
-    new_df = pd.concat([new_df, lane_speeds_df], axis=1)
-
-    return new_df
-
-
 # !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !  !
 # TODO: update this function with your plot(s) and data cache structure
 # >>> Note: if you change the function call signature, change it in the update_graph_live() function below
@@ -443,7 +368,7 @@ def determine_anomalies(lane_data, model, delta_threshold):
     return lane_data[lane_data['anomaly']==1]
 
 
-def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomaly_data, delta_threshold, model):
+def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomaly_data, delta_threshold, model, lane):
     """
     Function to generate plot from data cache (and any secondary inputs).
     :param data_cache_to_plot: current data cache (likely as dataframe)
@@ -458,8 +383,9 @@ def generate_figure(rds_cache_to_plot, dt_low_bound, dt_high_bound, anomaly_data
         '30s', on='link_update_time').mean()
     rds_plot_df = pd.pivot_table(rds_plot_df, values='speed', index=['link_update_time'], columns=['milemarker'])
 
-    lane1_data = anomaly_data[anomaly_data['lane_id']==1]
-    anomaly_points = determine_anomalies(lane1_data, model, delta_threshold)
+    #TODO: check the plot is correct
+    lane_data = anomaly_data[anomaly_data['lane_id']==int(lane)]
+    anomaly_points = determine_anomalies(lane_data, model, delta_threshold)
 
     # convert to central time
     rds_plot_df.index = rds_plot_df.index.tz_convert(local_tz_name)
@@ -579,11 +505,11 @@ def update_data(interval_number, click_number, lookback_display_value,
 # Useful when moving the threshold or selecting a new model
 @callback([Output(west_speed_ts_id, 'figure')], 
           [Input(interval_id, 'n_intervals'), Input(refresh_button_id, 'n_clicks'),
-           Input(anomalies_source_status_id, 'children'), Input(threshold_status_id, 'children'), 
+           Input(anomalies_source_status_id, 'children'), Input(threshold_status_id, 'children'), Input(lane_source_status_id, 'children'),
            Input(west_data_store_id, 'data'), Input(anomalies_store_id, 'data'),
-           State(settings_lookback_store_id, 'data'), State(settings_anomalies_source_store_id, 'data'), State(settings_threshold_store_id, 'data')])
-def update_graph_live(interval_number, click_number, anomalies_display, threshold_display,
-                      west_data, anomaly_data, lookback, anomalies_display_value, threshold_display_value):
+           State(settings_lookback_store_id, 'data'), State(settings_anomalies_source_store_id, 'data'), State(settings_threshold_store_id, 'data'), State(settings_lane_source_store_id, 'data')])
+def update_graph_live(interval_number, click_number, anomalies_display, threshold_display, lane_display,
+                      west_data, anomaly_data, lookback, anomalies_display_value, threshold_display_value, lane_display_value):
     print(f"DEBUG: {site_path_stub} function update_graph_live called by {ctx.triggered_id} component.")
 
     west_data = load_dataframe_from_page_storage(west_data, 'link_update_time')
@@ -592,7 +518,7 @@ def update_graph_live(interval_number, click_number, anomalies_display, threshol
     now_dt = now_tz()
     west_new_figure = generate_figure(rds_cache_to_plot=west_data, dt_low_bound=lookback, 
                                       dt_high_bound=now_dt, anomaly_data=anomaly_data,
-                                      delta_threshold=threshold_display_value, model=anomalies_display_value)
+                                      delta_threshold=threshold_display_value, model=anomalies_display_value, lane=lane_display_value)
 
     return (west_new_figure,)
 # ------------------------------------------------------------------
